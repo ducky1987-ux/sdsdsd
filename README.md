@@ -1,321 +1,383 @@
-# Wi-Fi Authentication Methods
+# The 4-Way Handshake in Wi-Fi (WPA/WPA2)
 
-This section covers the different authentication methods used in Wi-Fi networks, from open networks to enterprise solutions.
+## Overview
 
-## Authentication Method Overview
+The **4-way handshake** is a critical process in **WPA (Wi-Fi Protected Access)** and **WPA2** networks that establishes a secure connection between a client (e.g., laptop, smartphone) and an access point (AP). It ensures that both devices have the correct encryption keys and can communicate securely.
+
+## Why is the 4-Way Handshake Important?
+
+1. **Mutual Authentication** – Confirms that both the client and AP know the Pre-Shared Key (PSK)
+2. **Key Exchange** – Derives unique encryption keys for the session
+3. **Prevents Replay Attacks** – Uses random numbers (nonces) to ensure freshness
+4. **Establishes Trust** – Both parties verify each other before exchanging data
+
+## How the 4-Way Handshake Works
+
+### Overview Diagram
 
 ```
-┌─────────────────────────────────────────────────────┐
-│          Wi-Fi Authentication Methods               │
-└─────────────────────────────────────────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        │               │               │
-        ▼               ▼               ▼
-   ┌─────────┐    ┌─────────┐    ┌──────────┐
-   │  Open   │    │   PSK   │    │Enterprise│
-   │ Network │    │ (WPA/2/3)│    │ (802.1X) │
-   └─────────┘    └─────────┘    └──────────┘
-   No Security    Shared Key    RADIUS Server
+┌──────────┐                              ┌──────┐
+│  Client  │                              │  AP  │
+│(Supplicant)                    (Authenticator)
+└────┬─────┘                              └──┬───┘
+     │                                       │
+     │   1. ANonce (Random Number)           │
+     │<──────────────────────────────────────┤
+     │       (AP sends first)                │
+     │                                       │
+     │   2. SNonce + MIC                     │
+     ├──────────────────────────────────────>│
+     │       (Client responds)               │
+     │                                       │
+     │   3. GTK + MIC + Confirmation         │
+     │<──────────────────────────────────────┤
+     │       (AP sends group key)            │
+     │                                       │
+     │   4. ACK (Acknowledgment)             │
+     ├──────────────────────────────────────>│
+     │       (Client confirms)               │
+     │                                       │
+     │  ✓ Secure Connection Established      │
 ```
 
-## 1. Open Networks (No Encryption)
+## Detailed Step-by-Step Process
 
-### Overview
-- **Security**: None
-- **Encryption**: No
-- **Authentication**: No
-- **Use Case**: Public Wi-Fi, Guest networks
-- **Risk Level**: 🔴 **CRITICAL**
+### Message 1: AP → Client (ANonce)
 
-### How It Works
+**What Happens:**
+- The AP generates a random number: **ANonce (Authenticator Nonce)**
+- This random number is sent to the client
+- The client uses ANonce + PSK to start deriving the encryption key
+
+**Client Side Processing:**
 ```
-Device connects immediately without any verification
-No password or authentication required
-All traffic transmitted in plaintext
-Anyone nearby can connect and capture data
+PSK (Password) + SSID + ANonce + SNonce (will generate) + MAC Addresses
+                ↓
+        PMK (Pairwise Master Key) generated
+                ↓
+        PTK (Pairwise Transient Key) partially computed
 ```
+
+**Frame Details:**
+- Frame Type: EAPOL (Extensible Authentication Protocol Over LAN)
+- Nonce: ANonce (random 32-byte value)
+- Replay Counter: 0 (first message)
+- Key Information: Flags set
+
+---
+
+### Message 2: Client → AP (SNonce + MIC)
+
+**What Happens:**
+- The client generates its own random number: **SNonce (Supplicant Nonce)**
+- The client computes the **MIC (Message Integrity Code)** using the PTK (partially derived)
+- Both ANonce and SNonce are sent to derive the final PTK
+
+**Client Side Calculations:**
+```
+Client generates SNonce (random)
+         ↓
+Computes PTK using:
+  - PSK (shared password)
+  - SSID
+  - ANonce (from AP)
+  - SNonce (just generated)
+  - Client MAC address
+  - AP MAC address
+         ↓
+Computes MIC using PTK to verify message integrity
+         ↓
+Sends SNonce + MIC to AP
+```
+
+**Message Format:**
+```
+┌─────────────────────────────────────┐
+│  EAPOL Key Frame                    │
+├─────────────────────────────────────┤
+│ Frame Type: Key                     │
+│ Replay Counter: 1                   │
+│ Key Nonce: SNonce                   │
+│ RSSC: 0                             │
+│ Key RSC: 0                          │
+│ Key MIC: [MIC Value]                │
+│ Key Data Length: 0                  │
+│ Key Data: (None)                    │
+└─────────────────────────────────────┘
+```
+
+**AP Side Calculations:**
+```
+AP now has ANonce + SNonce + PSK + MAC Addresses
+         ↓
+Computes the same PTK
+         ↓
+Verifies MIC using computed PTK
+         ↓
+If MIC matches: Client knows the PSK ✓
+         ↓
+AP proceeds to Message 3
+```
+
+---
+
+### Message 3: AP → Client (GTK + MIC)
+
+**What Happens:**
+- The AP generates the **GTK (Group Temporal Key)** for multicast/broadcast traffic
+- AP sends GTK encrypted with the PTK
+- Includes a new MIC for verification
+
+**Key Components:**
+```
+PTK Components:
+├─ KCK (Key Confirmation Key) - for MIC
+├─ KEK (Key Encryption Key) - encrypts data
+├─ TK (Temporal Key) - for unicast encryption
+
+GTK:
+├─ Used for multicast/broadcast traffic
+├─ Group Key Index
+├─ Encrypted with KEK
+```
+
+**Message Format:**
+```
+┌─────────────────────────────────────┐
+│  EAPOL Key Frame (Message 3)        │
+├─────────────────────────────────────┤
+│ Frame Type: Key                     │
+│ Key Information:                    │
+│   - Key Type: Group (1) / Unicast   │
+│   - MIC: 1                          │
+│   - Secure: 1                       │
+│   - Error: 0                        │
+│   - Request: 0                      │
+│ Replay Counter: 2                   │
+│ Key Nonce: ANonce                   │
+│ Key RSNX: GTK                       │
+│ Key RSC: Sequence counter           │
+│ Key ID: Group Key Index             │
+│ Key MIC: [MIC of entire frame]      │
+│ Key Data Length: [encrypted GTK]    │
+│ Key Data: [Encrypted GTK]           │
+└─────────────────────────────────────┘
+```
+
+**AP Sends:**
+- Own ANonce
+- GTK (encrypted with KEK)
+- MIC for verification
+- Replay counter incremented
+
+**Client Side Processing:**
+```
+Receives Message 3
+         ↓
+Verifies MIC using KCK
+         ↓
+If MIC valid: AP is authentic ✓
+         ↓
+Decrypts GTK using KEK
+         ↓
+Installs PTK + GTK for encryption
+```
+
+---
+
+### Message 4: Client → AP (ACK)
+
+**What Happens:**
+- Client confirms receipt of Message 3
+- Sends an acknowledgment frame
+- Completes the handshake
+- Both sides now have identical keys
+
+**Message Format:**
+```
+┌─────────────────────────────────────┐
+│  EAPOL Key Frame (Message 4)        │
+├─────────────────────────────────────┤
+│ Frame Type: Key                     │
+│ Key Information:                    │
+│   - Key Type: Group / Unicast       │
+│   - MIC: 1                          │
+│   - Secure: 1                       │
+│   - Install: 0 (already installed)  │
+│ Replay Counter: 3                   │
+│ Key Nonce: 0                        │
+│ Key RSC: 0                          │
+│ Key MIC: [MIC of frame]             │
+│ Key Data Length: 0 (No data)        │
+└─────────────────────────────────────┘
+```
+
+**Final Result:**
+```
+┌─────────────────────────────────────┐
+│  Connection Established             │
+├─────────────────────────────────────┤
+│ Client & AP share:                  │
+│ ✓ PTK (Unicast encryption)          │
+│ ✓ GTK (Multicast encryption)        │
+│ ✓ Same nonces verified              │
+│ ✓ Mutual authentication complete    │
+│ ✓ All data now encrypted            │
+└─────────────────────────────────────┘
+```
+
+## Key Components Explained
+
+### Nonces (Random Numbers)
+
+**ANonce (Authenticator Nonce)**
+- Generated by AP
+- 256-bit random value
+- Used in key derivation
+- Changes for each connection
+
+**SNonce (Supplicant Nonce)**
+- Generated by client
+- 256-bit random value
+- Used in key derivation
+- Proves client knows PSK
+
+### Keys Generated
+
+**PMK (Pairwise Master Key)**
+```
+PMK = PBKDF2-SHA1(PSK, SSID, 4096 iterations, 256 bits)
+- Derived from password
+- Same for all devices on same SSID
+- Stored on AP for faster reconnection
+```
+
+**PTK (Pairwise Transient Key)**
+```
+PTK = PRF-SHA256(PMK || "Pairwise key expansion" || 
+                  MIN(MAC_A, MAC_B) || MAX(MAC_A, MAC_B) ||
+                  MIN(ANonce, SNonce) || MAX(ANonce, SNonce))
+                  
+- 384 bits total:
+  ├─ KCK (128 bits) - Key Confirmation Key (MIC)
+  ├─ KEK (128 bits) - Key Encryption Key
+  └─ TK (128 bits) - Temporal Key (actual encryption)
+```
+
+**GTK (Group Transient Key)**
+```
+GTK = Random 256-bit value generated by AP
+- For multicast/broadcast traffic
+- Same for all clients on AP
+- Sent encrypted in Message 3
+- Periodically refreshed
+```
+
+### MIC (Message Integrity Code)
+
+**Purpose:**
+- Ensures message wasn't modified
+- Authenticates sender
+- Computed using KCK (part of PTK)
+
+**Computation:**
+```
+MIC = HMAC-SHA1 or HMAC-SHA256(KCK, EAPOL_Frame)
+```
+
+**Verification:**
+- Receiver computes MIC
+- Compares with received MIC
+- If different: attack detected, frame rejected
+
+## Why the 4-Way Handshake Can Be Attacked
 
 ### Vulnerabilities
-- **Complete Data Exposure**
-  - All traffic visible to anyone
-  - Passwords captured easily
-  - Personal information exposed
 
-- **No Device Verification**
-  - Attackers can impersonate the network
-  - Man-in-the-middle attacks
+**1. KRACK Attack (Key Reinstallation Attack)**
+- **Discovered**: 2017 by Mathy Vanhoef and Frank Piessens
+- **How it works**:
+  - Attacker replays Message 3
+  - Forces key reinstallation
+  - Can reset nonce/encryption state
+  - Allows decryption of traffic
 
-- **No Integrity Protection**
-  - Data can be modified in transit
-  - Malware can be injected
+- **Prevention**:
+  - Update firmware/OS
+  - WPA3 resistant
 
-### Connection Process
-```bash
-# Device automatically connects
-iwconfig wlan0 essid "Free WiFi"
+**2. Offline Brute-Force Attack**
+- **Process**:
+  ```
+  1. Capture complete 4-way handshake
+  2. Try passwords from wordlist
+  3. Compute PTK for each password
+  4. Verify MIC against captured MIC
+  5. If match: password found ✓
+  ```
+- **Time**: Depends on wordlist size and hardware
+  - Fast wordlist: Minutes
+  - Large wordlist: Hours to days
 
-# No authentication needed
-# Traffic flows unencrypted
+**3. Weak Passwords**
+- Only 8-character passwords
+- Dictionary words
+- No special characters
+- Easily cracked
+
+**4. PMKID Attack**
+- Capture PMKID from single frame
+- No handshake needed
+- Faster offline attack
+- Requires single beacon frame
+
+## Wireshark Analysis
+
+### Capturing Handshake in Wireshark
+
+```
+Filter: eapol
+
+Observe:
+1. Message 1: Nonce from AP (Key Information bit 7 = 0)
+2. Message 2: Nonce from client (Key Information bit 7 = 1)
+3. Message 3: GTK from AP (MIC present)
+4. Message 4: Client ACK (MIC present)
 ```
 
-### Protection Measures
-- Use VPN on open networks
-- HTTPS for all connections
-- Avoid sensitive transactions
-- Don't connect to untrusted networks
+### Packet Structure
+
+```
+Frame
+├─ Ethernet Header
+├─ IP Header (if logged)
+├─ LLC Header
+└─ EAPOL
+   ├─ EAPOL Header
+   ├─ Key Descriptor Type
+   └─ Key Data Payload
+```
+
+## Protection Mechanisms
+
+### In WPA2
+
+- **Authentication**: PSK verified through MIC
+- **Confidentiality**: PTK for encryption
+- **Integrity**: MIC protects all messages
+- **Freshness**: Nonces prevent replay
+
+### In WPA3
+
+- **SAE (Simultaneous Authentication of Equals)**
+  - Replaces PSK exchange
+  - Protected against offline attacks
+  - Stronger math-based authentication
+
+- **Individualized Data Encryption (OWE)**
+  - Works without password
+  - Still establishes unique keys
 
 ---
 
-## 2. WPA/WPA2/WPA3-Personal (PSK Mode)
-
-### Overview
-- **Security**: Shared password-based
-- **Encryption**: TKIP (WPA), AES (WPA2/3)
-- **Authentication**: PSK (Pre-Shared Key)
-- **Use Case**: Home, small office
-- **Risk Level**: 🟡 **MODERATE** (WPA2/3) / 🔴 **HIGH** (WPA)
-
-### How It Works
-
-```
-Step 1: User enters password (PSK)
-         ↓
-Step 2: Device and AP execute 4-way handshake
-         ↓
-Step 3: PTK (encryption key) derived
-         ↓
-Step 4: Traffic encrypted with AES or TKIP
-         ↓
-Step 5: Secure communication established
-```
-
-### Authentication Flow
-
-```
-┌─────────┐                          ┌──────┐
-│ Device  │                          │  AP  │
-└────┬────┘                          └──┬───┘
-     │                                  │
-     │ 1. Association Request           │
-     ├─────────────────────────────────>│
-     │                                  │
-     │    2. ANonce (random number)     │
-     │<─────────────────────────────────┤
-     │                                  │
-     │ 3. SNonce + MIC                  │
-     ├─────────────────────────────────>│
-     │                                  │
-     │    4. GTK + Confirmation         │
-     │<─────────────────────────────────┤
-     │                                  │
-     │ ✓ Connection Established         │
-     │   Encrypted Communication Ready  │
-```
-
-### Key Derivation Process
-
-```
-PSK (Pre-Shared Key) = Password-based key
-      + SSID
-      + ANonce (AP random number)
-      + SNonce (Client random number)
-      + MAC Addresses
-      ↓
-     PTK (Pairwise Transient Key)
-     GTK (Group Transient Key)
-```
-
-### Strengths
-- Simple setup
-- No server required
-- Suitable for home/small networks
-- Strong encryption (WPA2/3)
-
-### Vulnerabilities
-
-**1. WPA Vulnerabilities**
-- TKIP can be cracked
-- Hours to days with Aircrack-ng
-- Deprecated - not recommended
-
-**2. WPA2 Vulnerabilities**
-- Offline brute-force attack
-- KRACK attack (patched)
-- PMKID attack (fast handshake capture)
-- Weak passwords vulnerable
-
-**3. Password Complexity**
-- 8-character passwords crackable
-- Dictionary attacks common
-- Rainbow tables available
-- Recommended: 16+ characters, mixed
-
-**4. Aircrack-ng Attack**
-```bash
-# Capture handshake
-airodump-ng -w capture -c 6 --bssid [BSSID] wlan0mon
-
-# Deauth to force handshake
-aireplay-ng --deauth 10 -a [BSSID] wlan0mon
-
-# Brute-force with wordlist
-aircrack-ng -w /usr/share/wordlists/rockyou.txt capture-01.cap
-```
-
-### Security Recommendations
-- WPA3-Personal preferred (if supported)
-- WPA2-Personal acceptable with strong password
-- Use 16+ character alphanumeric passwords
-- Change default passwords
-- Update router firmware regularly
-
----
-
-## 3. WPA/WPA2/WPA3-Enterprise (802.1X)
-
-### Overview
-- **Security**: Individual user credentials
-- **Authentication**: RADIUS server
-- **Encryption**: AES (192-bit in WPA3 Enterprise)
-- **Use Case**: Corporate, educational institutions
-- **Risk Level**: 🟢 **LOW** (Properly configured)
-
-### Architecture
-
-```
-┌──────────┐         ┌──────────┐         ┌──────────┐
-│  Client  │         │   AP     │         │ RADIUS   │
-│ (Device) │         │ (Router) │         │ Server   │
-└────┬─────┘         └────┬─────┘         └────┬─────┘
-     │                    │                     │
-     │ 1. Association     │                     │
-     ├──────────────────>│                     │
-     │                    │                     │
-     │                    │ 2. Auth Request    │
-     │                    ├────────────────────>│
-     │                    │                     │
-     │ 3. Identity/       │ 3. Challenge       │
-     │    Credentials     │<────────────────────┤
-     │<──────────────────┤                     │
-     │                    │ 4. Response        │
-     │ 4. Response        ├────────────────────>│
-     │ (Encrypted)        │                     │
-     ├──────────────────>│                     │
-     │                    │    5. Accept/      │
-     │                    │       Reject       │
-     │                    │<────────────────────┤
-     │                    │                     │
-     │ 5. OK / DENIED     │                     │
-     │<──────────────────┤                     │
-```
-
-### Authentication Methods
-
-**1. EAP-PEAP**
-- Protected EAP
-- Server certificate validated
-- Password sent in encrypted tunnel
-- Most common
-
-**2. EAP-TLS**
-- Requires client certificate
-- Mutual authentication
-- Very secure
-- Difficult to impersonate
-
-**3. EAP-TTLS**
-- Tunneled TLS
-- Server certificate validation
-- Username/password in tunnel
-- Good balance of security and usability
-
-**4. EAP-MSCHAPv2**
-- Microsoft proprietary
-- Vulnerable to attacks (ASLEAP)
-- Not recommended
-
-### Key Advantages
-
-1. **No Shared Password**
-   - Each user has unique credentials
-   - Password not shared between users
-   - Credentials stored on RADIUS server
-
-2. **Central Management**
-   - Credentials managed centrally
-   - Easy to revoke access
-   - Audit trail available
-
-3. **Mutual Authentication**
-   - Server validates to client
-   - Prevents rogue AP attacks
-   - Certificate-based trust
-
-4. **Strong Encryption**
-   - 192-bit AES in WPA3 Enterprise
-   - Per-user encryption keys
-   - Very secure
-
-### Enterprise Deployment Process
-
-```
-1. Set up RADIUS Server
-   - Install FreeRADIUS or similar
-   - Configure user database
-   - Generate SSL certificates
-
-2. Configure Access Point
-   - Enable WPA2/WPA3 Enterprise
-   - Point to RADIUS server
-   - Configure EAP method
-
-3. Configure Client Devices
-   - Select security: WPA2/3 Enterprise
-   - Choose EAP method
-   - Provide username/password or certificate
-
-4. Test Connection
-   - Verify handshake
-   - Check encryption
-   - Monitor RADIUS logs
-```
-
-### Security Considerations
-
-- **Certificate Validation**
-  - Ensure clients validate server certificate
-  - Prevents evil twin attacks
-
-- **Strong Passwords**
-  - Enforce password policy
-  - Regular updates
-  - Complexity requirements
-
-- **RADIUS Server Security**
-  - Firewall protection
-  - Secure shared secret
-  - Regular backups
-  - Monitoring and logging
-
-- **Certificate Management**
-  - Proper expiration handling
-  - Secure key storage
-  - Regular renewal
-
----
-
-## Comparison Table
-
-| Method | Encryption | Authentication | Setup | Security | Use Case |
-|--------|-----------|-----------------|------|----------|----------|
-| Open | None | None | Trivial | 🔴 None | Public WiFi |
-| WPA-PSK | TKIP | Shared Password | Simple | 🔴 Weak | Legacy |
-| WPA2-PSK | AES | Shared Password | Simple | 🟡 Good | Home/Office |
-| WPA3-PSK | AES | SAE | Simple | 🟢 Excellent | Modern Home |
-| WPA2-Enterprise | AES | RADIUS + EAP | Complex | 🟢 Strong | Corporate |
-| WPA3-Enterprise | AES-192 | RADIUS + EAP | Complex | 🟢 Very Strong | Enterprise |
-
----
-
-**Next**: Learn about [The 4-Way Handshake](../05-4-Way-Handshake/README.md)
+**Next**: Learn about practical [Aircrack-ng Guide](../06-Aircrack-ng-Guide/README.md)
